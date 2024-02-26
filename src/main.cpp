@@ -1,10 +1,59 @@
 #include <cmath>
 #include <array>
+#include <vector>
 
 #include "raylib-cpp.hpp"
 
-template<int W, int H>
-using Map = std::array<std::array<char, W + 1>, H>;
+#ifndef TILE_SIZE
+    #define TILE_SIZE 64
+#endif
+
+struct Tile {
+    const int xIndex, yIndex;
+    const raylib::Rectangle boundingRect;
+    const bool collidable;
+
+    Tile(int index_x, int index_y, bool collidable = false) :
+        xIndex(index_x), yIndex(index_y),
+        boundingRect(index_x * TILE_SIZE, index_y * TILE_SIZE, TILE_SIZE, TILE_SIZE),
+        collidable(collidable) {
+
+    }
+};
+
+class Map {
+private:
+    std::vector<std::vector<Tile>> m_Tiles;
+
+public:
+    Map(const std::vector<std::vector<int>>& data) : m_Tiles(data.size()) {        
+        for(int i = 0; i < data.size(); i++) {
+            for(int j = 0; j < data.at(i).size(); j++) {
+                switch(data.at(i).at(j)) {
+                    case 0:
+                        m_Tiles.at(i).push_back(Tile(j, i, false));
+                        TraceLog(LOG_INFO, TextFormat("Created tile at index: %i, %i (data value: %i)", j, i, 0));
+                        break;
+
+                    case 1:
+                        m_Tiles.at(i).push_back(Tile(j, i, true));
+                        TraceLog(LOG_INFO, TextFormat("Created tile at index: %i, %i (data value: %i)", j, i, 1));
+                        break;
+                }
+            }
+        }
+    }
+
+    void Render() {
+        for(const auto& i : m_Tiles) {
+            for(const auto& j : i) {
+                if(j.collidable) {
+                    DrawRectangleLinesEx(j.boundingRect, 1.0f, GREEN);
+                }
+            }
+        }
+    }
+};
 
 class Golfball {
 private:
@@ -13,12 +62,15 @@ private:
     float const m_Radius = 16.0f;
     float m_Velocity = 0.0f;
 
+    bool m_Selected;
+
 public:
     Golfball(raylib::Vector2 position) :
         m_Position(position),
         m_Direction(0.0f, 0.0f),
         m_Radius(16.0f),
-        m_Velocity(0.0f) {
+        m_Velocity(0.0f),
+        m_Selected(false) {
         
         }
     
@@ -27,24 +79,31 @@ public:
         CollisionCheck();
 
         m_Velocity = Lerp(m_Velocity, 0.0f, 2.0f * GetFrameTime());
-
         m_Position += m_Direction * m_Velocity * GetFrameTime();
     }
 
     void Render() {
         DrawCircleV(m_Position, m_Radius, WHITE);
-        DrawCircleLinesV(m_Position, m_Radius, BLACK);
+
+        if(m_Selected) {
+            DrawLineEx(m_Position, m_Position + m_Direction * Vector2Distance(m_Position, GetMousePosition()), 1.0f, GREEN);
+        }
     }
 
 private:
     void Push() {
-        if(raylib::Mouse::IsButtonDown(IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) && m_Velocity <= 2.0f) {
+        if(CheckCollisionPointCircle(raylib::Mouse::GetPosition(), m_Position, m_Radius) && raylib::Mouse::IsButtonPressed(IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) && m_Velocity <= 4.0f) {
+            m_Selected = true;
+        }
+
+        if(raylib::Mouse::IsButtonDown(IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) && m_Selected) {
             m_Direction.x = std::cos(atan2(raylib::Mouse::GetY() - m_Position.y, raylib::Mouse::GetX() - m_Position.x)) * -1;
             m_Direction.y = std::sin(atan2(raylib::Mouse::GetY() - m_Position.y, raylib::Mouse::GetX() - m_Position.x)) * -1;
         }
 
-        if(raylib::Mouse::IsButtonReleased(MOUSE_BUTTON_LEFT) && m_Velocity <= 2.0f) {
-               m_Velocity = Vector2Distance(GetMousePosition(), m_Position) * 4.0;
+        if(raylib::Mouse::IsButtonReleased(MOUSE_BUTTON_LEFT) && m_Selected) {
+            m_Velocity = Vector2Distance(GetMousePosition(), m_Position) * 4.0;
+            m_Selected = false;
         }
     }
 
@@ -89,40 +148,25 @@ int main() {
 
     Golfball golfball(raylib::Vector2(GetScreenWidth() / 2, GetScreenHeight() / 2));
 
-    Map<16, 16> map = {
-        "################",
-        "#              #",
-        "# #            #",
-        "#          #   #",
-        "#              #",
-        "#              #",
-        "#              #",
-        "#              #",
-        "#              #",
-        "#              #",
-        "#              #",
-        "#              #",
-        "#  #           #",
-        "#            # #",
-        "#              #",
-        "################"
+    std::vector<std::vector<int>> mapData {
+        std::vector<int> { 0,0,0,0,0,0,0,0 },
+        std::vector<int> { 0,1,0,0,0,0,1,0 },
+        std::vector<int> { 0,1,0,0,0,0,1,0 },
+        std::vector<int> { 0,1,0,0,0,0,1,0 },
+        std::vector<int> { 0,1,0,0,0,0,1,0 },
+        std::vector<int> { 0,1,0,0,0,0,1,0 },
+        std::vector<int> { 0,1,0,0,0,0,1,0 },
+        std::vector<int> { 0,0,0,0,0,0,0,0 },
     };
-
-    int map_cell_size = 48;
+    
+    Map map(mapData);
 
     while(!window.ShouldClose()) {
         golfball.Update();
 
         window.BeginDrawing().ClearBackground(BLACK);
 
-        for(int i = 0; i < map.size(); i++) {
-            for(int j = 0; j < map.at(0).size(); j++) {
-                if(map[i][j] == '#') {
-                    DrawRectangle(i * map_cell_size, j * map_cell_size, map_cell_size, map_cell_size, WHITE);
-                }
-            }
-        }
-
+        map.Render();
         golfball.Render();
 
         window.EndDrawing();
