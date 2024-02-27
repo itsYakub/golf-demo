@@ -5,20 +5,18 @@
 #include "raylib-cpp.hpp"
 
 #ifndef TILE_SIZE
-    #define TILE_SIZE 64
+    #define TILE_SIZE 48
 #endif
 
 struct Tile {
     const int xIndex, yIndex;
-    const raylib::Rectangle boundingRect;
+    const raylib::Rectangle rect;
     const bool collidable;
 
-    Tile(int index_x, int index_y, bool collidable = false) :
+    Tile(int index_x, int index_y, bool collidable) :
         xIndex(index_x), yIndex(index_y),
-        boundingRect(index_x * TILE_SIZE, index_y * TILE_SIZE, TILE_SIZE, TILE_SIZE),
-        collidable(collidable) {
-
-    }
+        rect(index_x * TILE_SIZE, index_y * TILE_SIZE, TILE_SIZE, TILE_SIZE),
+        collidable(collidable) { }
 };
 
 class Map {
@@ -32,12 +30,10 @@ public:
                 switch(data.at(i).at(j)) {
                     case 0:
                         m_Tiles.at(i).push_back(Tile(j, i, false));
-                        TraceLog(LOG_INFO, TextFormat("Created tile at index: %i, %i (data value: %i)", j, i, 0));
                         break;
 
                     case 1:
                         m_Tiles.at(i).push_back(Tile(j, i, true));
-                        TraceLog(LOG_INFO, TextFormat("Created tile at index: %i, %i (data value: %i)", j, i, 1));
                         break;
                 }
             }
@@ -48,97 +44,127 @@ public:
         for(const auto& i : m_Tiles) {
             for(const auto& j : i) {
                 if(j.collidable) {
-                    DrawRectangleLinesEx(j.boundingRect, 1.0f, GREEN);
+                    DrawRectangleLinesEx(j.rect, 1.0f, GREEN);
                 }
             }
         }
     }
+
+    raylib::Vector2 GetPositionToIndex(raylib::Vector2 position) {
+        int x = std::floor(position.x / TILE_SIZE);
+        int y = std::floor(position.y / TILE_SIZE);
+
+        return raylib::Vector2(x, y);
+    }
+
+    const int GetWidth() { return m_Tiles.at(0).size(); }
+    const int GetHeight() { return m_Tiles.size(); }
+
+    const std::vector<std::vector<Tile>>& GetData() { return m_Tiles; }
+    const Tile& GetTile(int x, int y) { return m_Tiles.at(y).at(x); }
 };
 
 class Golfball {
 private:
     raylib::Vector2 m_Position;
+    raylib::Vector2 m_DragDirrection;
     raylib::Vector2 m_Direction;
-    float const m_Radius = 16.0f;
-    float m_Velocity = 0.0f;
+
+    float const m_Radius;
+    float m_Velocity;
 
     bool m_Selected;
 
 public:
     Golfball(raylib::Vector2 position) :
         m_Position(position),
+        m_DragDirrection(0.0f, 0.0f),
         m_Direction(0.0f, 0.0f),
         m_Radius(16.0f),
         m_Velocity(0.0f),
-        m_Selected(false) {
-        
-        }
+        m_Selected(false) { }
     
     void Update() {
         Push();
-        CollisionCheck();
 
         m_Velocity = Lerp(m_Velocity, 0.0f, 2.0f * GetFrameTime());
-        m_Position += m_Direction * m_Velocity * GetFrameTime();
+        m_Position = Vector2Lerp(m_Position, m_Position + m_Direction * m_Velocity, GetFrameTime());
     }
 
     void Render() {
-        DrawCircleV(m_Position, m_Radius, WHITE);
+        DrawCircleLinesV(m_Position, m_Radius, GREEN);
 
         if(m_Selected) {
-            DrawLineEx(m_Position, m_Position + m_Direction * Vector2Distance(m_Position, GetMousePosition()), 1.0f, GREEN);
+            DrawLineEx(m_Position, m_Position + m_DragDirrection * Vector2Distance(m_Position, GetMousePosition()), 1.0f, GREEN);
+        }
+    }
+
+    void CollisionCheck(Map& map) {
+        for(int y = -1; y <= 1; y++) {
+            for(int x = -1; x <= 1; x++) {
+                if(x == 0 && y == 0) {
+                    continue;
+                }
+
+                const Tile& tile = map.GetTile(map.GetPositionToIndex(m_Position).x + x, map.GetPositionToIndex(m_Position).y + y);
+
+                if(CheckCollisionCircleRec(m_Position, m_Radius, tile.rect)) {
+                    Bounce(tile);
+                }
+            }
         }
     }
 
 private:
     void Push() {
-        if(CheckCollisionPointCircle(raylib::Mouse::GetPosition(), m_Position, m_Radius) && raylib::Mouse::IsButtonPressed(IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) && m_Velocity <= 4.0f) {
+        if(CheckCollisionPointCircle(raylib::Mouse::GetPosition(), m_Position, m_Radius) && raylib::Mouse::IsButtonPressed(IsMouseButtonReleased(MOUSE_BUTTON_LEFT))) {
             m_Selected = true;
         }
 
         if(raylib::Mouse::IsButtonDown(IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) && m_Selected) {
-            m_Direction.x = std::cos(atan2(raylib::Mouse::GetY() - m_Position.y, raylib::Mouse::GetX() - m_Position.x)) * -1;
-            m_Direction.y = std::sin(atan2(raylib::Mouse::GetY() - m_Position.y, raylib::Mouse::GetX() - m_Position.x)) * -1;
+            m_DragDirrection.x = std::cos(atan2(raylib::Mouse::GetY() - m_Position.y, raylib::Mouse::GetX() - m_Position.x)) * -1;
+            m_DragDirrection.y = std::sin(atan2(raylib::Mouse::GetY() - m_Position.y, raylib::Mouse::GetX() - m_Position.x)) * -1;
         }
 
         if(raylib::Mouse::IsButtonReleased(MOUSE_BUTTON_LEFT) && m_Selected) {
-            m_Velocity = Vector2Distance(GetMousePosition(), m_Position) * 4.0;
+            m_Direction = m_DragDirrection;
+            m_Velocity = Clamp(Vector2Distance(GetMousePosition(), m_Position), -256, 256) * 4.0;
             m_Selected = false;
         }
     }
 
-    void CollisionCheck() {
-        if(m_Position.x - m_Radius <= 0 || m_Position.x + m_Radius >= GetScreenWidth()) {
-            BounceHorizontal(0, GetScreenWidth());
+    void Bounce(const Tile& tile) {
+        raylib::Rectangle rect = tile.rect;
+
+        bool collisionUp = CheckCollisionPointLine(m_Position, raylib::Vector2(rect.x, rect.y), raylib::Vector2(rect.x + rect.width, rect.y), m_Radius) && tile.collidable;
+        bool collisionDown = CheckCollisionPointLine(m_Position, raylib::Vector2(rect.x, rect.y + rect.height), raylib::Vector2(rect.x + rect.width, rect.y + rect.height), m_Radius) && tile.collidable;
+
+        bool collisionLeft = CheckCollisionPointLine(m_Position, raylib::Vector2(rect.x, rect.y), raylib::Vector2(rect.x, rect.y + rect.height), m_Radius) && tile.collidable;
+        bool collisionRight = CheckCollisionPointLine(m_Position, raylib::Vector2(rect.x + rect.width, rect.y), raylib::Vector2(rect.x + rect.width, rect.y + rect.height), m_Radius) && tile.collidable;
+
+        if(collisionLeft || collisionRight) {
+            if(collisionLeft) {
+                m_Position.x = rect.x - m_Radius;
+            }
+
+            else if(collisionRight) {
+                m_Position.x = rect.x + rect.width + m_Radius;
+            }
+
+            m_Direction.x *= -1;
         }
 
-        if(m_Position.y - m_Radius <= 0 || m_Position.y + m_Radius >= GetScreenHeight()) {
-            BounceVertical(0, GetScreenHeight());
-        } 
-    }
+        if(collisionUp || collisionDown) {
+            if(collisionUp) {
+                m_Position.y = rect.y - m_Radius;
+            }
 
-    void BounceHorizontal(int bound_left, int bound_right) {
-        if(m_Position.x - m_Radius < bound_left - m_Radius * 2) {
-            m_Position.x = bound_left + m_Radius * 2;
-        }
+            else if(collisionDown) {
+                m_Position.y = rect.y + rect.height + m_Radius;
+            }
 
-        else if(m_Position.x + m_Radius > bound_right + m_Radius * 2) {
-            m_Position.x = bound_right - m_Radius * 2;
-        }
-
-        m_Direction.x *= -1;
-    }
-
-    void BounceVertical(int bound_up, int bound_down) {
-        if(m_Position.y - m_Radius < bound_up - m_Radius * 2) {
-            m_Position.y = bound_up + m_Radius * 2;
-        }
-
-        else if(m_Position.y + m_Radius > bound_down + m_Radius * 2) {
-            m_Position.y = bound_down - m_Radius * 2;
-        }
-
-        m_Direction.y *= -1;
+            m_Direction.y *= -1;
+        }    
     }
 };
 
@@ -149,20 +175,29 @@ int main() {
     Golfball golfball(raylib::Vector2(GetScreenWidth() / 2, GetScreenHeight() / 2));
 
     std::vector<std::vector<int>> mapData {
-        std::vector<int> { 0,0,0,0,0,0,0,0 },
-        std::vector<int> { 0,1,0,0,0,0,1,0 },
-        std::vector<int> { 0,1,0,0,0,0,1,0 },
-        std::vector<int> { 0,1,0,0,0,0,1,0 },
-        std::vector<int> { 0,1,0,0,0,0,1,0 },
-        std::vector<int> { 0,1,0,0,0,0,1,0 },
-        std::vector<int> { 0,1,0,0,0,0,1,0 },
-        std::vector<int> { 0,0,0,0,0,0,0,0 },
+        std::vector<int> { 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+        std::vector<int> { 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        std::vector<int> { 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        std::vector<int> { 1,0,0,1,1,1,0,0,0,0,1,1,1,0,0,1},
+        std::vector<int> { 1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1},
+        std::vector<int> { 1,0,0,1,0,1,0,0,0,0,1,0,1,0,0,1},
+        std::vector<int> { 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        std::vector<int> { 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        std::vector<int> { 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        std::vector<int> { 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        std::vector<int> { 1,0,0,1,0,1,0,0,0,0,1,0,1,0,0,1},
+        std::vector<int> { 1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1},
+        std::vector<int> { 1,0,0,1,1,1,0,0,0,0,1,1,1,0,0,1},
+        std::vector<int> { 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        std::vector<int> { 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
+        std::vector<int> { 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}
     };
     
     Map map(mapData);
 
     while(!window.ShouldClose()) {
         golfball.Update();
+        golfball.CollisionCheck(map);
 
         window.BeginDrawing().ClearBackground(BLACK);
 
